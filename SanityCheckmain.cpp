@@ -2,9 +2,16 @@
 #include "PathSimulator.hpp"
 #include "RandomGenerator.hpp"
 #include "CommodityForward.hpp"
+#include "ExposureEngine.hpp"
+#include "EuropeanCommodityOption.hpp"
+#include "AmericanOptionPricer.hpp"
+#include "MultiCommodityGSModel.hpp"
+#include "Choleskydecomposition.hpp"
+
 #include <iostream>
 #include <numeric>
 #include <cmath>
+
 
 int main() {
     // Define the parameters for the Gibson-Schwartz model
@@ -142,5 +149,162 @@ int main() {
     double relError = std::abs(mcMean - analyticalF) / analyticalF * 100.0;
     std::cout << "Relative error: " << relError << "%\n";
 
+
+    // ============================================================
+    // Phase 1 capstone: Expected Exposure (EE) profile for a single forward
+    // ============================================================
+
+    double forwardT = 5.0;   // maturity
+    double strikeK = 100.0;  // agreed delivery price
+
+    CommodityForward mainForward(strikeK, forwardT, params.kappa, params.alpha,
+        params.sigmaS, params.sigmaDelta, params.rho, params.r);
+
+    int eeSteps = 250;
+    double eeDt = forwardT / eeSteps;
+    PathSimulator eeSimulator(model, eeSteps, eeDt);
+
+    ExposureEngine engine(eeSimulator, mainForward, 42);
+
+    int eePaths = 5000;
+    std::vector<double> eeCurve = engine.computeEE(eePaths);
+
+    std::cout << "\n=== Expected Exposure Profile ===\n";
+    // Print every 25th step to keep the output readable
+    for (int j = 0; j <= eeSteps; j += 25) {
+        double t = j * eeDt;
+        std::cout << "t = " << t << "   EE(t) = " << eeCurve[j] << "\n";
+    }
+
+    // ============================================================
+// Phase 2, Step 1: European option validation (Black-76 on GS forward)
+// Cross-check against nested Monte Carlo: simulate to maturity,
+// average the discounted payoff.
+// ============================================================
+
+    double optK = 105.0;
+    double optT = 5.0;
+    EuropeanCommodityOption callOpt(optK, optT, OptionType::Call,
+        params.kappa, params.alpha, params.sigmaS, params.sigmaDelta, params.rho, params.r);
+
+    double t0_opt = 2.0;
+    std::vector<double> stateAtT0_opt = { 110.0, 0.06 };
+
+    double analyticalOptPrice = callOpt.markToMarket(t0_opt, stateAtT0_opt);
+    std::cout << "\n=== European Call Option Validation ===\n";
+    std::cout << "Analytical (Black-76 on GS) price at t=2: " << analyticalOptPrice << "\n";
+
+    // Nested MC: simulate from t0_opt to optT, average discounted payoff
+    int numStepsOpt = 150;
+    double dtOpt = (optT - t0_opt) / numStepsOpt;
+    PathSimulator optSimulator(model, numStepsOpt, dtOpt);
+
+    int numPathsOpt = 20000;  // option payoffs are more nonlinear, need more paths
+    double sumPayoff = 0.0;
+    for (int i = 0; i < numPathsOpt; ++i) {
+        RandomGenerator rngOpt(i + 50000);
+        auto path = optSimulator.simulatePath(rngOpt, stateAtT0_opt);
+        double S_T = path.back()[0];
+        sumPayoff += callOpt.payoff(S_T);
+    }
+    double mcOptPrice = std::exp(-params.r * (optT - t0_opt)) * (sumPayoff / numPathsOpt);
+
+    std::cout << "Monte Carlo price:                        " << mcOptPrice << "\n";
+    double optRelError = std::abs(mcOptPrice - analyticalOptPrice) / analyticalOptPrice * 100.0;
+    std::cout << "Relative error: " << optRelError << "%\n";
+
+
+    // ============================================================
+// European option EE profile ¡ª uses the analytical Black-76-on-GS
+// formula directly inside ExposureEngine (O(1) per time step,
+// no nested Monte Carlo needed at runtime)
+// ============================================================
+
+    PathSimulator eeSimulatorOpt(model, eeSteps, forwardT / eeSteps);  // reuse optT = forwardT = 5.0 grid
+    ExposureEngine engineOpt(eeSimulatorOpt, callOpt, 77);
+
+    std::vector<double> eeCurveOpt = engineOpt.computeEE(eePaths);
+
+    std::cout << "\n=== Expected Exposure Profile (European Call) ===\n";
+    for (int j = 0; j <= eeSteps; j += 25) {
+        double t = j * (forwardT / eeSteps);
+        std::cout << "t = " << t << "   EE(t) = " << eeCurveOpt[j] << "\n";
+    }
+
+
+
+    // ============================================================
+// Phase 2, Step 2: American option via Longstaff-Schwartz
+// Sanity check: American price should be >= European price
+// (early exercise is an optional right, never a disadvantage)
+// ============================================================
+
+
+    //int lsmSteps = 150;   // fewer steps than the EE grid ¡ª LSM cost grows with steps
+    //double lsmDt = optT / lsmSteps;
+    //PathSimulator lsmSimulator(model, lsmSteps, lsmDt);
+
+    //AmericanOptionPricer amCall(lsmSimulator, optK, AmOptionType::Call, params.r);
+    //double amPrice = amCall.price(20000, 99999, true);
+
+    //std::cout << "\n=== American Option (Longstaff-Schwartz) ===\n";
+    //std::cout << "American call price: " << amPrice << "\n";
+    //std::cout << "European call price: " << analyticalOptPrice << "\n";
+    //std::cout << (amPrice >= analyticalOptPrice ? "PASS: American >= European\n" : "FAIL: American < European (bug!)\n");
+
+
+
+
+    MultiCommodityParams mcParams;
+    mcParams.r = 0.03;
+    mcParams.commodities = {
+        {100.0, 0.05, 1.2, 0.08, 0.3, 0.1},
+        {60.0,  0.04, 1.0, 0.06, 0.35, 0.12}
+    };
+    mcParams.correlationMatrix = {
+        {1.0,  -0.5,  0.6,  -0.2},
+        {-0.5,  1.0, -0.2,   0.3},
+        {0.6,  -0.2,  1.0,  -0.4},
+        {-0.2,  0.3, -0.4,   1.0}
+    };
+
+    MultiCommodityGSModel mcModel(mcParams);
+
+    std::cout << "\n=== Multi-Commodity Correlation Validation ===\n";
+
+    // Directly test the correlated draws (not full paths), same idea as Sanity Check 3
+    auto L = CholeskyDecomposition::decompose(mcParams.correlationMatrix);
+
+    int numSamplesMC = 100000;
+    std::vector<std::vector<double>> wSamples(4);  // one vector per dimension
+
+    RandomGenerator rngMC(2024);
+    for (int i = 0; i < numSamplesMC; ++i) {
+        auto z = rngMC.generateNormals(4);
+        auto w = CholeskyDecomposition::applyToVector(L, z);
+        for (int d = 0; d < 4; ++d) {
+            wSamples[d].push_back(w[d]);
+        }
+    }
+
+    // Compute sample correlation between dimension 0 (S1) and dimension 2 (S2), should be ~0.6
+    double mean0 = std::accumulate(wSamples[0].begin(), wSamples[0].end(), 0.0) / numSamplesMC;
+    double mean2 = std::accumulate(wSamples[2].begin(), wSamples[2].end(), 0.0) / numSamplesMC;
+    double cov02 = 0.0;
+    for (int i = 0; i < numSamplesMC; ++i) {
+        cov02 += (wSamples[0][i] - mean0) * (wSamples[2][i] - mean2);
+    }
+    cov02 /= numSamplesMC;
+
+    std::cout << "Sample correlation (S1, S2): " << cov02 << "  (target: 0.6)\n";
+    // Ë³ÊÖÑéÖ¤ delta1 vs delta2 (index 1, 3), target: 0.3
+    double mean1 = std::accumulate(wSamples[1].begin(), wSamples[1].end(), 0.0) / numSamplesMC;
+    double mean3 = std::accumulate(wSamples[3].begin(), wSamples[3].end(), 0.0) / numSamplesMC;
+    double cov13 = 0.0;
+    for (int i = 0; i < numSamplesMC; ++i) {
+        cov13 += (wSamples[1][i] - mean1) * (wSamples[3][i] - mean3);
+    }
+    cov13 /= numSamplesMC;
+    std::cout << "Sample correlation (delta1, delta2): " << cov13 << "  (target: 0.3)\n";
     return 0;
 }

@@ -16,6 +16,10 @@ public:
 	std::vector<std::vector<double>> simulatePath(RandomGenerator& rng, const std::vector<double>& startState) const;
 
 	std::vector<std::vector<double>> simulatePath(RandomGenerator& rng) const;
+
+	double getDt() const { return dt_; }
+
+	int getNumSteps() const { return numSteps_; }
 };
 
 
