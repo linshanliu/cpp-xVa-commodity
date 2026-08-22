@@ -7,6 +7,11 @@
 #include "AmericanOptionPricer.hpp"
 #include "MultiCommodityGSModel.hpp"
 #include "Choleskydecomposition.hpp"
+#include "Portfolio.hpp"
+#include "ShortPosition.hpp"
+#include "CreditCurve.hpp"
+#include "Xvacalculator.hpp"
+#include "WrongWayRiskEngine.hpp"
 
 #include <iostream>
 #include <numeric>
@@ -306,5 +311,109 @@ int main() {
     }
     cov13 /= numSamplesMC;
     std::cout << "Sample correlation (delta1, delta2): " << cov13 << "  (target: 0.3)\n";
+
+
+
+
+
+    // ============================================================
+// Phase 3: Netting validation (v2 ¡ª trade2 is now a SHORT position,
+// so it offsets trade1 when the two positively-correlated
+// commodities move together)
+// ============================================================
+
+    CommodityForward trade1(100.0, 5.0, mcParams.commodities[0].kappa, mcParams.commodities[0].alpha,
+        mcParams.commodities[0].sigmaS, mcParams.commodities[0].sigmaDelta, -0.5, mcParams.r, 0);
+
+    CommodityForward trade2Underlying(60.0, 5.0, mcParams.commodities[1].kappa, mcParams.commodities[1].alpha,
+        mcParams.commodities[1].sigmaS, mcParams.commodities[1].sigmaDelta, 0.3, mcParams.r, 1);
+    ShortPosition trade2(trade2Underlying);   // now a short forward on commodity 1
+
+    Portfolio nettedPortfolio;
+    nettedPortfolio.addTrade(trade1);
+    nettedPortfolio.addTrade(trade2);
+
+    int mcEeSteps = 250;
+    double mcEeDt = 5.0 / mcEeSteps;
+    PathSimulator mcEeSimulator(mcModel, mcEeSteps, mcEeDt);
+
+    ExposureEngine engineTrade1(mcEeSimulator, trade1, 111);
+    ExposureEngine engineTrade2(mcEeSimulator, trade2, 222);
+    ExposureEngine engineNetted(mcEeSimulator, nettedPortfolio, 333);
+
+    int mcEePaths = 3000;
+    auto eeTrade1 = engineTrade1.computeEE(mcEePaths);
+    auto eeTrade2 = engineTrade2.computeEE(mcEePaths);
+    auto eeNetted = engineNetted.computeEE(mcEePaths);
+
+    std::cout << "\n=== Netting Effect Validation (long/short offsetting) ===\n";
+    for (int j = 0; j <= mcEeSteps; j += 50) {
+        double t = j * mcEeDt;
+        double standaloneSum = eeTrade1[j] + eeTrade2[j];
+        std::cout << "t=" << t
+            << "  EE(trade1)=" << eeTrade1[j]
+            << "  EE(trade2 short)=" << eeTrade2[j]
+            << "  Sum=" << standaloneSum
+            << "  EE(netted)=" << eeNetted[j] << "\n";
+    }
+
+    // ============================================================
+// Phase 4: CVA / FVA on the single-commodity forward EE profile
+// (reusing eeCurve computed earlier in Phase 1)
+// ============================================================
+
+    CreditCurve counterpartyCurve(0.02);   // flat hazard rate, ~2% annualized (illustrative)
+    double recoveryRate = 0.4;              // standard market assumption for senior unsecured
+    XVACalculator xva(counterpartyCurve, recoveryRate, params.r);
+
+    double cva = xva.computeCVA(eeCurve, forwardT / eeSteps);
+    double fundingSpread = 0.015;           // 150bps illustrative funding spread
+    double fva = xva.computeFVA(eeCurve, forwardT / eeSteps, fundingSpread);
+
+    std::cout << "\n=== XVA (single forward) ===\n";
+    std::cout << "CVA: " << cva << "\n";
+    std::cout << "FVA: " << fva << "\n";
+
+    // Sensitivity check: doubling hazard rate should roughly double CVA (for small hazard rates)
+    CreditCurve riskierCounterparty(0.04);
+    XVACalculator xvaRiskier(riskierCounterparty, recoveryRate, params.r);
+    double cvaRiskier = xvaRiskier.computeCVA(eeCurve, forwardT / eeSteps);
+    std::cout << "CVA with 2x hazard rate: " << cvaRiskier << " (should be roughly ~2x original CVA)\n";
+
+
+    // ============================================================
+// Phase 4: Wrong-Way Risk validation
+// Three-way comparison:
+//   1) Analytical CVA (from XVACalculator, assumes independence)
+//   2) Monte Carlo CVA with gamma=0 (should match #1, cross-check)
+//   3) Monte Carlo CVA with gamma>0 (WWR: should be HIGHER than #1/#2)
+// ============================================================
+
+    double lambda0 = 0.02;
+    double gammaWWR = -3.0;   // negative sign because mainForward is a LONG position
+    // (exposure rises with S, so hazard rate must also rise with S for true WWR)
+
+
+    WrongWayRiskEngine engineNoWWR(eeSimulator, mainForward, lambda0, 0.0, recoveryRate, params.r);
+    WrongWayRiskEngine engineWithWWR(eeSimulator, mainForward, lambda0, gammaWWR, recoveryRate, params.r);
+
+
+    int wwrPaths = 20000;
+    double cvaMcNoWWR = engineNoWWR.computeCVA(wwrPaths, 5000, 0);
+    double cvaMcWithWWR = engineWithWWR.computeCVA(wwrPaths, 5000, 0);
+
+    std::cout << "\n=== Wrong-Way Risk Validation ===\n";
+    std::cout << "Analytical CVA (independence assumption): " << cva << "\n";
+    std::cout << "Monte Carlo CVA (gamma=0, cross-check):    " << cvaMcNoWWR << "\n";
+    std::cout << "Monte Carlo CVA (gamma=3, with WWR):       " << cvaMcWithWWR << "\n";
+    std::cout << "WWR uplift: " << ((cvaMcWithWWR / cvaMcNoWWR - 1.0) * 100.0) << "%\n";
+
+
+    std::cout << "\n=== WWR Sensitivity to gamma ===\n";
+    for (double g : {0.0, -1.0, -2.0, -3.0, -5.0}) {
+        WrongWayRiskEngine engineG(eeSimulator, mainForward, lambda0, g, recoveryRate, params.r);
+        double cvaG = engineG.computeCVA(wwrPaths, 5000, 0);
+        std::cout << "gamma=" << g << "  CVA=" << cvaG << "\n";
+    }
     return 0;
 }

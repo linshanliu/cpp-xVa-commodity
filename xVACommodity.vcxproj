@@ -134,6 +134,7 @@
     <ClInclude Include="AmericanOptionPricer.hpp" />
     <ClInclude Include="Choleskydecomposition.hpp" />
     <ClInclude Include="CommodityForward.hpp" />
+    <ClInclude Include="Creditcurve.hpp" />
     <ClInclude Include="EuropeanCommodityOption.hpp" />
     <ClInclude Include="ExposureEngine.hpp" />
     <ClInclude Include="GibsonSchwartzModel.hpp" />
@@ -143,19 +144,28 @@
     <ClInclude Include="Multicommoditygsmodel.hpp" />
     <ClInclude Include="Multicommodityparams.hpp" />
     <ClInclude Include="PathSimulator.hpp" />
+    <ClInclude Include="Portfolio.hpp" />
     <ClInclude Include="RandomGenerator.hpp" />
+    <ClInclude Include="Shortposition.hpp" />
+    <ClInclude Include="Wrongwayriskengine.hpp" />
+    <ClInclude Include="Xvacalculator.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AmericanOptionPricer.cpp" />
     <ClCompile Include="Choleskydecomposition.cpp" />
     <ClCompile Include="CommodityForward.cpp" />
+    <ClCompile Include="Creditcurve.cpp" />
     <ClCompile Include="EuropeanCommodityOption.cpp" />
     <ClCompile Include="ExposureEngine.cpp" />
     <ClCompile Include="GibsonSchwartzModel.cpp" />
     <ClCompile Include="Multicommoditygsmodel.cpp" />
     <ClCompile Include="PathSimulator.cpp" />
+    <ClCompile Include="Portfolio.cpp" />
     <ClCompile Include="RandomGenerator.cpp" />
     <ClCompile Include="SanityCheckmain.cpp" />
+    <ClCompile Include="Shortposition.cpp" />
+    <ClCompile Include="Wrongwayriskengine.cpp" />
+    <ClCompile Include="Xvacalculator.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
