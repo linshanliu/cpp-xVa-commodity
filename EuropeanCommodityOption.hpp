@@ -10,6 +10,10 @@ public:
         double kappa, double alpha, double sigmaS,
         double sigmaDelta, double rho, double r);
 
+    EuropeanCommodityOption(double K, double T, OptionType type,
+        double kappa, double alpha, double sigmaS,
+        double sigmaDelta, double rho, double r, int commodityIndex);
+
     // Black-76 style price on top of the Gibson-Schwartz forward.
     // At t >= T, returns the intrinsic payoff (undiscounted).
     double markToMarket(double t, const std::vector<double>& state) const override;
@@ -23,11 +27,15 @@ public:
 
     double payoff(double S_T) const;
 
+
 private:
     double K_, T_;
     OptionType type_;
     double kappa_, alpha_, sigmaS_, sigmaDelta_, rho_, r_;
 
+
+    int commodityIndex_;
     static double normCdf(double x);
+    std::vector<double> extractOwnState(const std::vector<double>& fullState) const;
 };
 #endif

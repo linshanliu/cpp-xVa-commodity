@@ -1,11 +1,18 @@
-#include "EuropeanCommodityOption.hpp"
+﻿#include "EuropeanCommodityOption.hpp"
 #include <cmath>
 #include <algorithm>
 
 EuropeanCommodityOption::EuropeanCommodityOption(double K, double T, OptionType type,
     double kappa, double alpha, double sigmaS, double sigmaDelta, double rho, double r)
     : K_(K), T_(T), type_(type), kappa_(kappa), alpha_(alpha),
-    sigmaS_(sigmaS), sigmaDelta_(sigmaDelta), rho_(rho), r_(r) {
+    sigmaS_(sigmaS), sigmaDelta_(sigmaDelta), rho_(rho), r_(r), commodityIndex_(0) {
+}
+
+
+EuropeanCommodityOption::EuropeanCommodityOption(double K, double T, OptionType type,
+    double kappa, double alpha, double sigmaS, double sigmaDelta, double rho, double r, int commodityIndex)
+    : K_(K), T_(T), type_(type), kappa_(kappa), alpha_(alpha),
+    sigmaS_(sigmaS), sigmaDelta_(sigmaDelta), rho_(rho), r_(r), commodityIndex_(commodityIndex) {
 }
 
 double EuropeanCommodityOption::normCdf(double x) {
@@ -37,6 +44,7 @@ double EuropeanCommodityOption::forwardPrice(double t, const std::vector<double>
     return std::exp(logF);
 }
 
+// Var[lnS(T)​∣F(t)​]
 double EuropeanCommodityOption::totalVariance(double t) const {
     double tau = T_ - t;
     if (tau <= 0.0) return 0.0;
@@ -62,15 +70,31 @@ double EuropeanCommodityOption::payoff(double S_T) const {
     }
 }
 
+std::vector<double> EuropeanCommodityOption::extractOwnState(const std::vector<double>& fullState) const {
+    // Pull out this trade's own [S, delta] pair from a (possibly larger)
+    // multi-commodity state vector. For commodityIndex_=0 on a 2-element
+    // state, this is just {fullState[0], fullState[1]} — identical to
+    // the original single-commodity behavior.
+    return { fullState[2 * commodityIndex_], fullState[2 * commodityIndex_ + 1] };
+}
+
+
+//Black-76
+//   Call: C = exp(-r*tau) * [ F * N(d1) - K * N(d2) ]
+//   Put:  P = exp(-r*tau) * [ K * N(-d2) - F * N(-d1) ]
+//
+//   d1 = ( ln(F/K) + 0.5*V(tau) ) / sqrt(V(tau))
+//   d2 = d1 - sqrt(V(tau))
 double EuropeanCommodityOption::markToMarket(double t, const std::vector<double>& state) const {
+    std::vector<double> ownState = extractOwnState(state);
     double tau = T_ - t;
 
     if (tau <= 0.0) {
         // At/after maturity: intrinsic value using current spot
-        return payoff(state[0]);
+        return payoff(ownState[0]);
     }
 
-    double F = forwardPrice(t, state);
+    double F = forwardPrice(t, ownState);
     double V = totalVariance(t);         // total variance of ln(S_T)
     double sqrtV = std::sqrt(V);
 

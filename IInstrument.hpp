@@ -6,10 +6,12 @@ class IInstrument {
 public:
     virtual ~IInstrument() = default;
 
-    // 给定当前时刻t、当前市场状态[S_t, delta_t], 计算这笔交易此刻的MtM
+	// given the current time t and the current state of the model, return the mark-to-market value of this instrument
     virtual double markToMarket(double t, const std::vector<double>& state) const = 0;
 
-    // 这笔交易的到期时间,ExposureEngine要知道过了到期日就不用再算了
+
+	// getter for the maturity of the instrument, ExposureEngine needs to know when the instrument has matured
+    // so it can stop calculating exposure after that date
     virtual double maturity() const = 0;
 };
 #endif

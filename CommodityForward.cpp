@@ -22,6 +22,8 @@ std::vector<double> CommodityForward::extractOwnState(const std::vector<double>&
     return { fullState[2 * commodityIndex_], fullState[2 * commodityIndex_ + 1] };
 }
 
+
+// F(t,T)=E[S(T)?¨OF(t)?] use the closed form solution
 double CommodityForward::forwardPrice(double t, const std::vector<double>& ownState) const {
     double S_t = ownState[0];
     double delta_t = ownState[1];
@@ -49,6 +51,7 @@ double CommodityForward::forwardPrice(double t, const std::vector<double>& ownSt
     double logF = meanLogS + 0.5 * varLogS;
     return std::exp(logF);
 }
+
 
 double CommodityForward::markToMarket(double t, const std::vector<double>& state) const {
     std::vector<double> ownState = extractOwnState(state);

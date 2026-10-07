@@ -16,6 +16,8 @@
 #include <iostream>
 #include <numeric>
 #include <cmath>
+#include <thread>
+#include <chrono>
 
 
 int main() {
@@ -415,5 +417,51 @@ int main() {
         double cvaG = engineG.computeCVA(wwrPaths, 5000, 0);
         std::cout << "gamma=" << g << "  CVA=" << cvaG << "\n";
     }
+
+    // ============================================================
+// Phase 5: Variance reduction and convergence diagnostics
+// ============================================================
+
+    std::cout << "\n=== Convergence Diagnostic (plain Monte Carlo) ===\n";
+    for (int n : {500, 1000, 2000, 4000, 8000}) {
+        auto eeConv = engine.computeEE(n);   // reuse the ExposureEngine from Phase 1 (mainForward)
+        std::cout << "numPaths=" << n << "  EE(T)=" << eeConv.back() << "\n";
+    }
+
+    std::cout << "\n=== Antithetic Variates vs Plain MC (same total path count) ===\n";
+    int compareN = 4000;
+    auto eePlain = engine.computeEE(compareN);
+    auto eeAnti = engine.computeEEAntithetic(compareN);
+    std::cout << "Plain MC,       numPaths=" << compareN << "  EE(T)=" << eePlain.back() << "\n";
+    std::cout << "Antithetic MC,  numPaths=" << compareN << "  EE(T)=" << eeAnti.back() << "\n";
+
+    std::cout << "\n=== Multithreaded EE computation ===\n";
+    auto startTime = std::chrono::high_resolution_clock::now();
+    auto eeSerial = engine.computeEE(eePaths);
+    auto midTime = std::chrono::high_resolution_clock::now();
+    auto eeParallel = engine.computeEEParallel(eePaths, std::thread::hardware_concurrency());
+    auto endTime = std::chrono::high_resolution_clock::now();
+
+    double serialMs = std::chrono::duration<double, std::milli>(midTime - startTime).count();
+    double parallelMs = std::chrono::duration<double, std::milli>(endTime - midTime).count();
+
+    std::cout << "Serial:   " << serialMs << " ms,  EE(T)=" << eeSerial.back() << "\n";
+    std::cout << "Parallel: " << parallelMs << " ms,  EE(T)=" << eeParallel.back()
+        << "  (" << std::thread::hardware_concurrency() << " threads)\n";
+    std::cout << "Speedup: " << (serialMs / parallelMs) << "x\n";
+
+    //=====
+
+    std::cout << "\n=== Thread count diagnostic ===\n";
+    std::cout << "Hardware concurrency reported: " << std::thread::hardware_concurrency() << "\n";
+
+    for (int numThreads : {2, 4, 8, 16}) {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        auto eeN = engine.computeEEParallel(eePaths, numThreads);
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+        std::cout << "threads=" << numThreads << "  time=" << ms << " ms  EE(T)=" << eeN.back() << "\n";
+    }
+
     return 0;
 }
